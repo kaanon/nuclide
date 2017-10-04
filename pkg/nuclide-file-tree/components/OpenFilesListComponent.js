@@ -152,7 +152,7 @@ export class OpenFilesListComponent extends React.PureComponent<Props, State> {
                       })}
                       onClick={this._onCloseClick.bind(this, e)}
                     />
-                    <PathWithFileIcon path={e.name} />
+                    <PathWithFileIcon path={e.displayName || e.name} />
                   </TreeItem>
                 );
               })}
@@ -164,13 +164,57 @@ export class OpenFilesListComponent extends React.PureComponent<Props, State> {
   }
 }
 
+function generateDistinctNames(
+  entries: Array<OpenFileEntry>,
+  duplicateName: string,
+): Array<OpenFileEntry> {
+  const dupes = entries.filter(e => e.name === duplicateName);
+  const maxLength = dupes.reduce((len, entry) => {
+    return entry.uri.length > len ? entry.uri.length : len;
+  }, 0);
+  let i = 0; // the last matching index
+  for (i; i < maxLength; i++) {
+    const letter = dupes[0].uri[i];
+    const isSameChar = dupes.reduce((isSame, entry) => {
+      if (isSame && entry.uri[i] === letter) {
+        return true;
+      }
+      return false;
+    }, true);
+    if (!isSameChar) {
+      break;
+    }
+  }
+
+  return entries.map(entry => {
+    let displayName;
+    if (entry.displayName === undefined) {
+      displayName = entry.name === duplicateName ? entry.uri.substr(i) : entry.name;
+    } else {
+      displayName = entry.displayName;
+    }
+    return {
+      ...entry,
+      displayName,
+    };
+  });
+}
 function propsToEntries(props: Props): Array<OpenFileEntry> {
-  const entries = props.uris.map(uri => {
+  const nameCounter = {};
+  let entries = props.uris.map(uri => {
     const isModified = props.modifiedUris.indexOf(uri) >= 0;
     const isSelected = uri === props.activeUri;
-    return {uri, name: FileTreeHelpers.keyToName(uri), isModified, isSelected};
+    const name = FileTreeHelpers.keyToName(uri);
+    nameCounter[name] = nameCounter[name] ? nameCounter[name] + 1 : 1;
+    return {uri, name, isModified, isSelected};
   });
 
+  // Remove duplicates
+  for (const name in nameCounter) {
+    if (nameCounter[name] > 1) {
+      entries = generateDistinctNames(entries, name);
+    }
+  }
   entries.sort((e1, e2) =>
     e1.name.toLowerCase().localeCompare(e2.name.toLowerCase()),
   );
