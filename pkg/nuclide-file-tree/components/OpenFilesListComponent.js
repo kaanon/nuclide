@@ -13,6 +13,7 @@ import type {NuclideUri} from 'nuclide-commons/nuclideUri';
 
 import * as React from 'react';
 import classnames from 'classnames';
+import nuclideUri from 'nuclide-commons/nuclideUri';
 import {PanelComponentScroller} from 'nuclide-commons-ui/PanelComponentScroller';
 import FileTreeActions from '../lib/FileTreeActions';
 import FileTreeHelpers from '../lib/FileTreeHelpers';
@@ -21,7 +22,6 @@ import PathWithFileIcon from '../../nuclide-ui/PathWithFileIcon';
 import {TreeList, TreeItem, NestedTreeItem} from '../../nuclide-ui/Tree';
 import {track} from '../../nuclide-analytics';
 import {goToLocation} from 'nuclide-commons-atom/go-to-location';
-
 const getActions = FileTreeActions.getInstance;
 const store = FileTreeStore.getInstance();
 
@@ -120,7 +120,7 @@ export class OpenFilesListComponent extends React.PureComponent<Props, State> {
 
   render(): React.Node {
     const sortedEntries = propsToEntries(this.props);
-
+    const formattedEntries = formatEntries(sortedEntries);
     return (
       <div className="nuclide-file-tree-open-files">
         <PanelComponentScroller>
@@ -128,7 +128,7 @@ export class OpenFilesListComponent extends React.PureComponent<Props, State> {
             that require a single level of indentation */}
           <TreeList showArrows className="nuclide-file-tree-open-files-list">
             <NestedTreeItem hasFlatChildren>
-              {sortedEntries.map(e => {
+              {formattedEntries.map(e => {
                 const isHoveredUri = this.state.hoveredUri === e.uri;
                 return (
                   <TreeItem
@@ -152,7 +152,7 @@ export class OpenFilesListComponent extends React.PureComponent<Props, State> {
                       })}
                       onClick={this._onCloseClick.bind(this, e)}
                     />
-                    <PathWithFileIcon path={e.displayName || e.name} />
+                    <PathWithFileIcon path={e.name} />
                   </TreeItem>
                 );
               })}
@@ -168,53 +168,57 @@ function generateDistinctNames(
   entries: Array<OpenFileEntry>,
   duplicateName: string,
 ): Array<OpenFileEntry> {
-  const dupes = entries.filter(e => e.name === duplicateName);
-  const maxLength = dupes.reduce((len, entry) => {
-    return entry.uri.length > len ? entry.uri.length : len;
-  }, 0);
-  let i = 0; // the last matching index
-  for (i; i < maxLength; i++) {
-    const letter = dupes[0].uri[i];
-    const isSameChar = dupes.reduce((isSame, entry) => {
-      if (isSame && entry.uri[i] === letter) {
-        return true;
-      }
-      return false;
-    }, true);
-    if (!isSameChar) {
-      break;
-    }
-  }
-
   return entries.map(entry => {
-    let displayName;
-    if (entry.displayName === undefined) {
-      displayName = entry.name === duplicateName ? entry.uri.substr(i) : entry.name;
-    } else {
-      displayName = entry.displayName;
+    const {uri, name} = entry;
+    if (name === duplicateName) {
+      const dirname = nuclideUri.basename(uri.replace(name, ''));
+      const parent = nuclideUri.basename(dirname);
+      entry.name = nuclideUri.join(parent, name);
     }
-    return {
-      ...entry,
-      displayName,
-    };
+    return entry;
   });
 }
+
+function formatEntries(allEntries: Array<OpenFileEntry>): Array<OpenFileEntry> {
+  let nameCounter = {};
+  let entries = allEntries.slice();
+  const fillNameCounter = files => {
+    files
+      .map(f => f.name)
+      .forEach(
+        name =>
+          (nameCounter[name] = nameCounter[name] ? nameCounter[name] + 1 : 1),
+      );
+  };
+  const maxLoops = 4;
+  let curLoop = 0;
+  const hasDuplicates = files => {
+    curLoop++;
+    if (curLoop > maxLoops) {
+      return false;
+    }
+    nameCounter = {};
+    fillNameCounter(entries);
+    return Object.keys(nameCounter).some(name => nameCounter[name] > 1);
+  };
+  while (hasDuplicates(entries)) {
+    // Remove duplicates
+    for (const name in nameCounter) {
+      if (nameCounter[name] > 1) {
+        entries = generateDistinctNames(entries, name);
+      }
+    }
+  }
+  return entries;
+}
+
 function propsToEntries(props: Props): Array<OpenFileEntry> {
-  const nameCounter = {};
-  let entries = props.uris.map(uri => {
+  const entries = props.uris.map(uri => {
     const isModified = props.modifiedUris.indexOf(uri) >= 0;
     const isSelected = uri === props.activeUri;
     const name = FileTreeHelpers.keyToName(uri);
-    nameCounter[name] = nameCounter[name] ? nameCounter[name] + 1 : 1;
     return {uri, name, isModified, isSelected};
   });
-
-  // Remove duplicates
-  for (const name in nameCounter) {
-    if (nameCounter[name] > 1) {
-      entries = generateDistinctNames(entries, name);
-    }
-  }
   entries.sort((e1, e2) =>
     e1.name.toLowerCase().localeCompare(e2.name.toLowerCase()),
   );
